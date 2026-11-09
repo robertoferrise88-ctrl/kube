@@ -93,6 +93,7 @@
       width: 100%;
       height: 100%;
       cursor: grab;
+      touch-action: none;
     }
 
     #view canvas:active { cursor: grabbing; }
@@ -158,7 +159,7 @@
 
     <aside id="panel">
       <h2>Dein Würfel</h2>
-      <p id="status">Drehe den Würfel mit der Maus und mische ihn zum Start.</p>
+      <p id="status">Ziehe mit der Maus direkt am Würfel, um ihn zu drehen.</p>
       <p>Züge: <strong id="moves">0</strong></p>
 
       <h3>Seite drehen</h3>
@@ -178,13 +179,12 @@
       </div>
 
       <button class="wide" id="shuffle">Würfel mischen</button>
-      <p class="hint">Tipp: Klicke auf den Würfel, halte die Maustaste gedrückt und ziehe, um ihn zu drehen.</p>
+      <p class="hint">Klicke auf den Würfel, halte die Maustaste gedrückt und ziehe.</p>
     </aside>
   </main>
 
   <script type="module">
     import * as THREE from "three";
-    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
     import { RoundedBoxGeometry } from "three/addons/geometries/RoundedBoxGeometry.js";
 
     const menu = document.querySelector("#menu");
@@ -197,8 +197,7 @@
     scene.background = new THREE.Color("#10121c");
 
     const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
-
-    // Die Kamera schaut von unten auf die weiße Unterseite.
+    // Von unten auf die weiße Unterseite schauen.
     camera.position.set(5, -5, 7);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -206,13 +205,10 @@
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     view.appendChild(renderer.domElement);
 
-    const controls = new OrbitControls(camera, renderer.domElement);
-    controls.enableDamping = true;
-    controls.enableRotate = true;
-    controls.enablePan = false;
-    controls.minDistance = 4;
-    controls.maxDistance = 12;
-    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    // Der Würfel ist in dieser Gruppe. Die Maus dreht die Gruppe,
+    // nicht die Kamera.
+    const cubeRoot = new THREE.Group();
+    scene.add(cubeRoot);
 
     scene.add(new THREE.HemisphereLight(0xffffff, 0x46465a, 2));
 
@@ -238,6 +234,38 @@
       B: { axis: "z", side: -1, direction:  1 }
     };
 
+    // Mausbewegung dreht den Würfel selbst.
+    let dragging = false;
+    let previousX = 0;
+    let previousY = 0;
+
+    renderer.domElement.addEventListener("pointerdown", event => {
+      dragging = true;
+      previousX = event.clientX;
+      previousY = event.clientY;
+      renderer.domElement.setPointerCapture(event.pointerId);
+    });
+
+    renderer.domElement.addEventListener("pointermove", event => {
+      if (!dragging) return;
+
+      const deltaX = event.clientX - previousX;
+      const deltaY = event.clientY - previousY;
+      previousX = event.clientX;
+      previousY = event.clientY;
+
+      cubeRoot.rotation.y += deltaX * 0.01;
+      cubeRoot.rotation.x += deltaY * 0.01;
+    });
+
+    renderer.domElement.addEventListener("pointerup", () => {
+      dragging = false;
+    });
+
+    renderer.domElement.addEventListener("pointercancel", () => {
+      dragging = false;
+    });
+
     function resize() {
       const width = view.clientWidth;
       const height = view.clientHeight;
@@ -253,6 +281,12 @@
       moveCount = 0;
       movesText.textContent = "0";
       cubies = [];
+      queue = [];
+
+      // Vorhandene Würfelteile entfernen.
+      while (cubeRoot.children.length > 0) {
+        cubeRoot.remove(cubeRoot.children[0]);
+      }
 
       const bodyGeometry =
         new RoundedBoxGeometry(0.98, 0.98, 0.98, 3, 0.07);
@@ -323,13 +357,15 @@
               (z - (size - 1) / 2) * spacing
             );
 
-            scene.add(cubie);
+            cubeRoot.add(cubie);
             cubie.userData.homePosition = cubie.position.clone();
             cubie.userData.homeRotation = cubie.quaternion.clone();
             cubies.push(cubie);
           }
         }
       }
+
+      cubeRoot.rotation.set(0, 0, 0);
     }
 
     function addMove(notation) {
@@ -354,7 +390,7 @@
       );
 
       const pivot = new THREE.Group();
-      scene.add(pivot);
+      cubeRoot.add(pivot);
       layer.forEach(cubie => pivot.attach(cubie));
 
       const direction = face.direction * (inverse ? -1 : 1);
@@ -377,7 +413,7 @@
         pivot.updateMatrixWorld(true);
 
         layer.forEach(cubie => {
-          scene.attach(cubie);
+          cubeRoot.attach(cubie);
 
           cubie.position.set(
             Math.round(cubie.position.x / spacing) * spacing,
@@ -397,7 +433,7 @@
           cubie.quaternion.setFromEuler(euler);
         });
 
-        scene.remove(pivot);
+        cubeRoot.remove(pivot);
         moveCount++;
         movesText.textContent = String(moveCount);
         busy = false;
@@ -417,7 +453,7 @@
 
       statusText.textContent = solved
         ? "Geschafft! Dein Würfel ist gelöst 🎉"
-        : "Drehe den Würfel mit der Maus oder nutze die Zug-Knöpfe.";
+        : "Ziehe den Würfel mit der Maus oder nutze die Zug-Knöpfe.";
     }
 
     document.querySelector("#start").addEventListener("click", () => {
@@ -428,7 +464,7 @@
       resize();
 
       statusText.textContent =
-        "Drehe den Würfel mit der Maus oder mische ihn zum Start.";
+        "Ziehe den Würfel mit der Maus, um ihn zu drehen.";
     });
 
     document.querySelectorAll("[data-move]").forEach(button => {
@@ -462,7 +498,6 @@
 
     function render() {
       requestAnimationFrame(render);
-      controls.update();
       renderer.render(scene, camera);
     }
 
