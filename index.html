@@ -1,0 +1,357 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Würfel-Spiel</title>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      color: #f4f5ff;
+      background: #10121c;
+      font-family: system-ui, Arial, sans-serif;
+    }
+    button, select { font: inherit; }
+    #game {
+      display: none;
+      min-height: 100vh;
+      grid-template-columns: minmax(0, 1fr) 250px;
+    }
+    #view {
+      position: relative;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+    #view canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    #panel {
+      padding: 22px;
+      background: #191c29;
+      border-left: 1px solid #303449;
+    }
+    h1, h2 { margin-top: 0; }
+    .move-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    button, select {
+      width: 100%;
+      padding: 11px;
+      color: #f4f5ff;
+      background: #292e42;
+      border: 1px solid #424861;
+      border-radius: 9px;
+      cursor: pointer;
+    }
+    button:hover { background: #3a415c; }
+    .wide { margin-top: 12px; }
+    #status { min-height: 48px; color: #b8bfd8; }
+    #menu {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background:
+        radial-gradient(ellipse at top, #29345e 0%, #10121c 65%);
+    }
+    .card {
+      width: min(440px, 100%);
+      padding: 30px;
+      text-align: center;
+      background: #191c29;
+      border: 1px solid #424861;
+      border-radius: 18px;
+      box-shadow: 0 20px 80px #0008;
+    }
+    .card p { color: #b8bfd8; line-height: 1.5; }
+    .card label {
+      display: block;
+      margin: 22px 0 8px;
+      text-align: left;
+    }
+    #start {
+      margin-top: 14px;
+      background: #596de8;
+      border-color: #7485f4;
+      font-weight: 700;
+    }
+    @media (max-width: 700px) {
+      #game { grid-template-columns: 1fr; }
+      #view { min-height: 60vh; }
+      #panel { border-left: 0; border-top: 1px solid #303449; }
+    }
+  </style>
+</head>
+
+<body>
+  <main id="menu">
+    <section class="card">
+      <h1>🧩 Würfel-Spiel</h1>
+      <p>Such dir deinen Würfel aus und versuche, alle Seiten wieder richtig zu sortieren.</p>
+      <label for="cubeSize">Welchen Würfel möchtest du spielen?</label>
+      <select id="cubeSize">
+        <option value="2">2 × 2 – leicht</option>
+        <option value="3" selected>3 × 3 – klassisch</option>
+        <option value="4">4 × 4 – knifflig</option>
+      </select>
+      <button id="start">Spiel starten</button>
+    </section>
+  </main>
+
+  <main id="game">
+    <div id="view"></div>
+    <aside id="panel">
+      <h2>Dein Würfel</h2>
+      <p id="status">Drehe den Würfel mit der Maus. Mische ihn, dann löse ihn.</p>
+      <p>Züge: <strong id="moves">0</strong></p>
+      <h3>Seite drehen</h3>
+      <div class="move-grid">
+        <button data-move="U">U</button><button data-move="U'">U′</button>
+        <button data-move="D">D</button><button data-move="D'">D′</button>
+        <button data-move="L">L</button><button data-move="L'">L′</button>
+        <button data-move="R">R</button><button data-move="R'">R′</button>
+        <button data-move="F">F</button><button data-move="F'">F′</button>
+        <button data-move="B">B</button><button data-move="B'">B′</button>
+      </div>
+      <button class="wide" id="shuffle">Würfel mischen</button>
+    </aside>
+  </main>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+    const menu = document.querySelector("#menu");
+    const game = document.querySelector("#game");
+    const view = document.querySelector("#view");
+    const statusText = document.querySelector("#status");
+    const movesText = document.querySelector("#moves");
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#10121c");
+
+    const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+    camera.position.set(5, 5, 7);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    view.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.enablePan = false;
+    controls.minDistance = 4;
+    controls.maxDistance = 12;
+
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x46465a, 2));
+    const light = new THREE.DirectionalLight(0xffffff, 2.5);
+    light.position.set(5, 8, 6);
+    scene.add(light);
+
+    const spacing = 1.03;
+    const halfTurn = Math.PI / 2;
+    let cubies = [];
+    let cubeSize = 3;
+    let moveCount = 0;
+    let queue = [];
+    let busy = false;
+
+    const faces = {
+      R: { axis: "x", side:  1, direction: -1 },
+      L: { axis: "x", side: -1, direction:  1 },
+      U: { axis: "y", side:  1, direction: -1 },
+      D: { axis: "y", side: -1, direction:  1 },
+      F: { axis: "z", side:  1, direction: -1 },
+      B: { axis: "z", side: -1, direction:  1 }
+    };
+
+    function resize() {
+      const width = view.clientWidth;
+      const height = view.clientHeight;
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height);
+    }
+
+    function makeCube(size) {
+      cubeSize = size;
+      moveCount = 0;
+      movesText.textContent = "0";
+      cubies = [];
+
+      const colors = [
+        "#e53935", "#ff8c00", "#f4f4f4",
+        "#f0d500", "#25b85a", "#2878e8"
+      ];
+      const inside = "#161821";
+
+      for (let x = 0; x < size; x++) {
+        for (let y = 0; y < size; y++) {
+          for (let z = 0; z < size; z++) {
+            const materials = [
+              new THREE.MeshStandardMaterial({ color: x === size - 1 ? colors[0] : inside, roughness: 0.35 }),
+              new THREE.MeshStandardMaterial({ color: x === 0 ? colors[1] : inside, roughness: 0.35 }),
+              new THREE.MeshStandardMaterial({ color: y === size - 1 ? colors[2] : inside, roughness: 0.35 }),
+              new THREE.MeshStandardMaterial({ color: y === 0 ? colors[3] : inside, roughness: 0.35 }),
+              new THREE.MeshStandardMaterial({ color: z === size - 1 ? colors[4] : inside, roughness: 0.35 }),
+              new THREE.MeshStandardMaterial({ color: z === 0 ? colors[5] : inside, roughness: 0.35 })
+            ];
+
+            const cubie = new THREE.Mesh(
+              new THREE.BoxGeometry(0.96, 0.96, 0.96),
+              materials
+            );
+
+            cubie.position.set(
+              (x - (size - 1) / 2) * spacing,
+              (y - (size - 1) / 2) * spacing,
+              (z - (size - 1) / 2) * spacing
+            );
+
+            scene.add(cubie);
+            cubie.userData.homePosition = cubie.position.clone();
+            cubie.userData.homeRotation = cubie.quaternion.clone();
+            cubies.push(cubie);
+          }
+        }
+      }
+    }
+
+    function addMove(notation) {
+      queue.push(notation);
+      runNextMove();
+    }
+
+    function runNextMove() {
+      if (busy || queue.length === 0) return;
+
+      busy = true;
+      const notation = queue.shift();
+      const face = faces[notation[0]];
+      const inverse = notation.endsWith("'");
+      const axis = new THREE.Vector3(
+        face.axis === "x" ? 1 : 0,
+        face.axis === "y" ? 1 : 0,
+        face.axis === "z" ? 1 : 0
+      );
+      const outerPosition = face.side * ((cubeSize - 1) / 2) * spacing;
+      const layer = cubies.filter(cubie =>
+        Math.abs(cubie.position[face.axis] - outerPosition) < 0.1
+      );
+
+      const pivot = new THREE.Group();
+      scene.add(pivot);
+      layer.forEach(cubie => pivot.attach(cubie));
+
+      const direction = face.direction * (inverse ? -1 : 1);
+      const start = performance.now();
+      const duration = 180;
+
+      function animateTurn(now) {
+        const progress = Math.min((now - start) / duration, 1);
+        const eased = 1 - Math.pow(1 - progress, 3);
+        pivot.rotation.set(0, 0, 0);
+        pivot.rotation[face.axis] = direction * halfTurn * eased;
+
+        if (progress < 1) {
+          requestAnimationFrame(animateTurn);
+          return;
+        }
+
+        pivot.rotation[face.axis] = direction * halfTurn;
+        pivot.updateMatrixWorld(true);
+
+        layer.forEach(cubie => {
+          scene.attach(cubie);
+          cubie.position.set(
+            Math.round(cubie.position.x / spacing) * spacing,
+            Math.round(cubie.position.y / spacing) * spacing,
+            Math.round(cubie.position.z / spacing) * spacing
+          );
+
+          const euler = new THREE.Euler().setFromQuaternion(cubie.quaternion, "XYZ");
+          euler.set(
+            Math.round(euler.x / halfTurn) * halfTurn,
+            Math.round(euler.y / halfTurn) * halfTurn,
+            Math.round(euler.z / halfTurn) * halfTurn
+          );
+          cubie.quaternion.setFromEuler(euler);
+        });
+
+        scene.remove(pivot);
+        moveCount++;
+        movesText.textContent = String(moveCount);
+        busy = false;
+        checkSolved();
+        runNextMove();
+      }
+
+      requestAnimationFrame(animateTurn);
+    }
+
+    function checkSolved() {
+      const solved = cubies.every(cubie =>
+        cubie.position.distanceTo(cubie.userData.homePosition) < 0.08 &&
+        Math.abs(cubie.quaternion.dot(cubie.userData.homeRotation)) > 0.999
+      );
+
+      statusText.textContent = solved
+        ? "Geschafft! Dein Würfel ist gelöst 🎉"
+        : "Drehe den Würfel mit der Maus. Mit den Knöpfen machst du Züge.";
+    }
+
+    document.querySelector("#start").addEventListener("click", () => {
+      menu.style.display = "none";
+      game.style.display = "grid";
+      makeCube(Number(document.querySelector("#cubeSize").value));
+      resize();
+      statusText.textContent = "Drehe den Würfel mit der Maus. Mische ihn, dann löse ihn.";
+    });
+
+    document.querySelectorAll("[data-move]").forEach(button => {
+      button.addEventListener("click", () => addMove(button.dataset.move));
+    });
+
+    document.querySelector("#shuffle").addEventListener("click", () => {
+      queue = [];
+      const choices = Object.keys(faces);
+      let previous = "";
+      for (let i = 0; i < 20; i++) {
+        let face;
+        do {
+          face = choices[Math.floor(Math.random() * choices.length)];
+        } while (face === previous);
+        previous = face;
+        queue.push(face + (Math.random() < 0.5 ? "'" : ""));
+      }
+      runNextMove();
+      statusText.textContent = "Gemischt! Jetzt bist du dran.";
+    });
+
+    window.addEventListener("resize", resize);
+
+    function render() {
+      requestAnimationFrame(render);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    render();
+  </script>
+</body>
+</html>
